@@ -46,11 +46,25 @@
 
     // Firebase no conserva arreglos vacíos ni undefined: guardamos el estado como JSON
     // para que la partida llegue a los celulares exactamente igual que en el creador.
-    function pack(obj) { return { j: JSON.stringify(obj), ts: firebase.database.ServerValue.TIMESTAMP }; }
+    function pack(obj) { return { j: JSON.stringify(shiftTimes(obj, +OFF)), ts: firebase.database.ServerValue.TIMESTAMP }; }
     function unpack(v) {
       if (!v) return null;
-      if (typeof v.j === "string") { try { return JSON.parse(v.j); } catch (e) { return null; } }
+      if (typeof v.j === "string") { try { return shiftTimes(JSON.parse(v.j), -OFF); } catch (e) { return null; } }
       return v;
+    }
+
+    // Relojes: cada celular puede tener la hora un poco adelantada o atrasada.
+    // Firebase nos dice la diferencia con la hora del servidor; en la nube guardamos
+    // la hora del servidor y cada dispositivo la convierte a su propio reloj. Así la
+    // barra de tiempo y el orden de los votos coinciden en todos los celulares.
+    var OFF = 0;
+    rtdb.ref(".info/serverTimeOffset").on("value", function (s) { var v = s.val(); OFF = typeof v === "number" ? v : 0; });
+    var TIME_KEYS = ["t0", "t1", "t2", "t3", "ts"];
+    function shiftTimes(o, d) {
+      if (!o || typeof o !== "object" || !d) return o;
+      var c = Object.assign({}, o);
+      TIME_KEYS.forEach(function (k) { if (typeof c[k] === "number" && c[k] > 0) c[k] = c[k] + d; });
+      return c;
     }
     function refFor(path) {
       if (path === "live/actual") return rtdb.ref(ROOT + "live");
@@ -88,16 +102,23 @@
         var code = String(name).replace(/^ceo-/i, "").toUpperCase();
         var peersRef = rtdb.ref(ROOT + "rooms/" + code + "/peers");
         var myRef = peersRef.child(ME);
-        var myPres = {}, list = [], cbs = [], errCbs = [];
+        var myPres = {}, list = [], cbs = [], errCbs = [], firstLoad;
+        var loaded = new Promise(function (r) { firstLoad = r; });
+        function wire(p) { return JSON.stringify(shiftTimes(p, +OFF)); }
 
         var h = peersRef.on("value", function (s) {
           var v = s.val() || {};
           list = Object.keys(v).map(function (id) {
-            var p = null; try { p = JSON.parse(v[id].p); } catch (e) {}
+            var p = null; try { p = shiftTimes(JSON.parse(v[id].p), -OFF); } catch (e) {}
             return { id: id, presence: p, isMe: id === ME, sameTab: id === ME };
           }).filter(function (x) { return x.presence; });
+          firstLoad();
           cbs.forEach(function (cb) { try { cb(); } catch (e) {} });
-        }, function () { errCbs.forEach(function (cb) { try { cb(); } catch (e) {} }); });
+        }, function () { firstLoad(); errCbs.forEach(function (cb) { try { cb(); } catch (e) {} }); });
+
+        // Esperamos la primera lista de dispositivos (y sus votos) antes de seguir, para que
+        // el creador no revele una ronda creyendo que nadie ha votado.
+        await Promise.race([loaded, new Promise(function (r) { setTimeout(r, 8000); })]);
 
         // Si el celular se desconecta (cierra la pestaña, pierde señal) su presencia se borra sola.
         myRef.onDisconnect().remove();
@@ -105,13 +126,13 @@
         // Al recuperar la conexión, se vuelve a registrar la presencia automáticamente.
         var conRef = rtdb.ref(".info/connected");
         var hc = conRef.on("value", function (s) {
-          if (s.val() === true) { myRef.onDisconnect().remove(); myRef.set({ p: JSON.stringify(myPres), ts: firebase.database.ServerValue.TIMESTAMP }); }
+          if (s.val() === true) { myRef.onDisconnect().remove(); myRef.set({ p: wire(myPres), ts: firebase.database.ServerValue.TIMESTAMP }); }
         });
 
         return {
           presence: async function (o) {
             myPres = Object.assign({}, myPres, o);
-            await withTimeout(myRef.set({ p: JSON.stringify(myPres), ts: firebase.database.ServerValue.TIMESTAMP }), 10000, "sin conexión");
+            await withTimeout(myRef.set({ p: wire(myPres), ts: firebase.database.ServerValue.TIMESTAMP }), 10000, "sin conexión");
           },
           onPeers: function (cb, errCb) {
             cbs.push(cb); if (errCb) errCbs.push(errCb);

@@ -639,7 +639,7 @@ function dealCls(){if(!fresh("d"+G.rid))return "";
 /* ===== estado ===== */
 var CAP={db:null,room:null,user:null},capsReady=false,canHost=false;
 var MODE="home",remote=false,G=null,CODE="",gdoc=null,unsub=null,unsubLive=null,RM=null,offPeers=null,roomOk=false;
-var myTeam=-1,ov={},ovlv={},lastKey="",wq=Promise.resolve(),waiting=false;
+var myTeam=-1,ov={},ovlv={},lastKey="",wq=Promise.resolve(),waiting=false,PIN=false;/* PIN: entró con un código explícito (QR o escrito), no sigue a la partida activa global */
 
 function newGame(code,names,n,tr,nr){n=n||4;names=names||NM;return{v:2,code:code,n:n,tr:tr||30,nr:nr||18,r:0,ph:"lobby",rid:"",t0:0,t1:0,t2:0,t3:0,cs:0,
   teams:names.slice(0,n).map(function(x,i){return{name:x||NM[i],cash:START,debt:0,k:[50,50,50],st:[0,0,0],tb:rand()}}),res:null,hist:[]}}
@@ -683,10 +683,14 @@ function watchLive(){
   unsubLive=CAP.db.doc("live/actual").onSnapshot(function(sn){
     var d=sn.exists?sn.data():null;if(!liveFresh(d))return;
     if(MODE==="home"&&waiting){waiting=false;playerJoin(d.code,true)}
-    else if(MODE==="player"&&d.code!==CODE){toast("El coordinador abrió una partida nueva. Cambiando…");leaveAll().then(function(){playerJoin(d.code,true)})}
+    /* Solo cambian de partida si la suya no está en juego: así nadie puede "secuestrar" a los celulares a media ronda. */
+    else if(MODE==="player"&&!PIN&&d.code!==CODE&&(!G||G.ph==="lobby"||G.ph==="final"||G.ph==="ceremony")){toast("El coordinador abrió una partida nueva. Cambiando…");leaveAll().then(function(){playerJoin(d.code,true)})}
   },function(){});
 }
 async function autoJoin(){window.__ceoRole="player";
+  /* Si la liga o el QR ya traen el código (#equipo=ABCD), se entra directo a esa partida. */
+  var hc=/=([A-Za-z0-9]{4})\b/.exec(location.hash||"");
+  if(hc){waiting=false;PIN=true;await playerJoin(hc[1],true);if(MODE==="player"){watchLive();return}}
   waiting=true;lastKey="";renderAll();watchLive();
   try{var s=await CAP.db.doc("live/actual").get();var d=s.exists?s.data():null;
     if(liveFresh(d)&&waiting){waiting=false;await playerJoin(d.code,true)}}catch(e){}
@@ -709,7 +713,10 @@ async function hostResume(code){window.__ceoRole="host";
   var s;try{s=await CAP.db.doc("games/"+code).get()}catch(e){$("herr").textContent="No se pudo leer la partida.";return}
   if(!s.exists||!s.data().v){$("herr").textContent="No encontramos la partida "+code+".";return}
   CODE=code;G=clone(s.data());remote=true;gdoc=CAP.db.doc("games/"+code);ls("ceoHost",code);MODE="host";ov={};ovlv={};
-  await publishLive(code);wake();await enterRoom("host");lastKey="";renderAll();
+  await publishLive(code);wake();await enterRoom("host");
+  /* Al reanudar a media ronda, el reloj vuelve a empezar: así no se revela de golpe ni se castiga a quien ya votó. */
+  AR=0;FR=0;NX=0;if(G.ph==="round"){G.t0=Date.now();save()}else if(G.ph==="reveal"){G.t1=Date.now();save()}
+  lastKey="";renderAll();
 }
 function hostLocal(){CODE="";G=newGame("");remote=false;MODE="host";ov={};ovlv={};lastKey="";renderAll()}
 function setN(n){var names=G.teams.map(function(t){return t.name});for(var i=names.length;i<n;i++)names.push(NM[i]);G.teams=newGame(CODE,names,n).teams;G.n=n;save()}
@@ -745,10 +752,10 @@ function cerSteps(){var n=Math.min(3,G.teams.length),s=[];for(var i=n-1;i>=0;i--
 function startCeremony(){G.ph="ceremony";G.cs=0;G.t2=Date.now();save()}
 function cerNext(){var st=cerSteps();if(G.cs<st.length-1){G.cs++;G.t2=Date.now();save()}}
 function replay(){G=newGame(CODE,G.teams.map(function(t){return t.name}),G.n,G.tr,G.nr);ov={};ovlv={};save()}
-async function exitToHome(){await leaveAll();MODE="home";G=null;CODE="";remote=false;myTeam=-1;waiting=false;document.body.classList.remove("ply");lastKey="";renderAll()}
+async function exitToHome(){await leaveAll();PIN=false;MODE="home";G=null;CODE="";remote=false;myTeam=-1;waiting=false;document.body.classList.remove("ply");lastKey="";renderAll()}
 
 /* ===== acciones del equipo ===== */
-async function playerJoin(code,auto){window.__ceoRole="player";
+async function playerJoin(code,auto){window.__ceoRole="player";if(!auto)PIN=true;
   code=(code||"").trim().toUpperCase();var err=$("perr");
   if(!code){if(err)err.textContent="Escriban el código que aparece en el proyector.";return}
   var s;try{s=await CAP.db.doc("games/"+code).get()}catch(e){if(err)err.textContent="No se pudo leer la partida. Revisen su conexión.";return}
