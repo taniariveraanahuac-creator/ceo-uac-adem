@@ -458,6 +458,9 @@ button.ch:hover .oic,.ch.on .oic{transform:rotate(-8deg) scale(1.12)}
 <main><section id="P" class="stack"></section><aside class="card" id="B"></aside></main>
 <div class="toast" id="toast" hidden></div><datalist id="nmL"></datalist>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="firebase-config.js"></script>
 <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
 <script src="red.js"></script>
 <script>
@@ -693,7 +696,9 @@ async function autoJoin(){window.__ceoRole="player";
 async function publishLive(code){try{await CAP.db.doc("live/actual").set({code:code,ts:Date.now()})}catch(e){toast("La partida se creó, pero no se pudo anunciar a la liga de participantes. Compartan el código.")}}
 function wake(){try{navigator.wakeLock&&navigator.wakeLock.request("screen").catch(function(){})}catch(e){}}
 async function hostCreate(){window.__ceoRole="host";
-  var code=rnd(4);CODE=code;G=newGame(code);remote=true;
+  var code=rnd(4);
+  if(window.__ceoTransport==="firebase"){for(var tries=0;tries<5;tries++){try{var ex=await CAP.db.doc("games/"+code).get();if(!ex.exists)break}catch(e){break}code=rnd(4)}}
+  CODE=code;G=newGame(code);remote=true;
   gdoc=CAP.db.doc("games/"+code);
   try{await gdoc.set(clone(G))}catch(e){if($("herr"))$("herr").textContent="No se pudo crear la partida. Revisen la conexión e intenten de nuevo.";return}
   await publishLive(code);
@@ -813,7 +818,7 @@ function hostGuide(open){return '<details class="guide"'+(open?' open':'')+'><su
  '<li>Ten los premios listos y pide a 2 o 3 personas que formen el Comité de Inversionistas al frente.</li></ol>'+
  '<h4>Sonidos</h4><ul><li>No hay música de fondo. Solo suenan efectos cortos: caja registradora al decidir, monedas al ganar y un rugido al revelar. Se apagan con el botón 🔊 Efectos.</li></ul>'+
  '<h4>Para quien edita la página</h4><ul>'+
- '<li>Conexión en <code>red.js</code>: la computadora del creador guarda la partida y la reparte a los celulares (WebRTC, sin servidor propio ni cuentas). <b>No cierres esa pestaña</b> durante el juego.</li>'+
+ '<li>Conexión en <code>red.js</code>: '+(window.__ceoTransport==="firebase"?'la partida se guarda en la nube (Firebase), así que los celulares la encuentran desde cualquier red. Si la pestaña del creador se recarga, usa <b>Reanudar</b> con el código.':'la computadora del creador guarda la partida y la reparte a los celulares (WebRTC, sin servidor propio ni cuentas). <b>No cierres esa pestaña</b> durante el juego.')+'</li>'+
  '<li>Votos: cada celular envía <code>team, rid, pick, lv, ts</code> a la computadora del creador.</li>'+
  '<li>Casos: arreglo <code>R</code>. Cada opción tiene costo <code>c</code>, probabilidad <code>p</code>, retorno si sale bien <code>s</code> o mal <code>f</code> (veces la inversión) y efectos <code>k</code>.</li>'+
  '<li>Ajustes: <code>START</code>, <code>RATE</code>, <code>PT</code>, <code>T_REV</code>, <code>T_FINAL</code>, <code>T_CER</code>.</li></ul></details>'}
